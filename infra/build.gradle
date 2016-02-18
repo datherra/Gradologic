@@ -1,0 +1,145 @@
+plugins {
+    id "de.undercouch.download" version "2.1.0"
+}
+
+ext {
+  javaHome = System.getProperty('java.home')
+  wlsInstaller = 'wls1036_dev.zip'
+  localEnvDir = "${projectDir}/.local"
+  wlsInstallerDestPath = "${localEnvDir}/${wlsInstaller}"
+  wlsHome = "${localEnvDir}/wls1036_dev/"
+  templateProperties = "${projectDir}/buildSrc/main/resources/createTemplate.properties"
+  devDomain = "${localEnvDir}/domains/devDomain"
+  osName = System.getProperty('os.name').toLowerCase()
+  weblogicClasspath = files(
+    "${javaHome}/../lib/tools.jar",
+    "${wlsHome}/wlserver/server/lib/weblogic_sp.jar",
+    "${wlsHome}/wlserver/server/lib/weblogic.jar",
+    "${wlsHome}/modules/features/weblogic.server.modules_10.3.6.0.jar",
+    "${wlsHome}/wlserver/server/lib/webservices.jar",
+    "${wlsHome}/modules/org.apache.ant_1.7.1/lib/ant-all.jar",
+    "${wlsHome}/modules/net.sf.antcontrib_1.1.0.0_1-0b2/lib/ant-contrib.jar",
+    "${wlsHome}/wlserver/server/lib"
+  )
+}
+
+// if you have a local artifact repositorie, this task can be replaced
+// by regular Gradle ways of fetching dependencies and libraries
+task downloadFile(type: de.undercouch.gradle.tasks.download.Download) {
+  description 'Regular download of Weblogic via HTTP'
+  src "https://s3-sa-east-1.amazonaws.com/weblogic-artifacts/wls1036_dev.zip"
+  dest wlsInstallerDestPath
+  overwrite false
+}
+
+// task 'type: Copy' doesn't work here, because ignores outputs.dir
+task extractWeblogic(dependsOn: downloadFile) {
+  description 'Unpacks previously downloaded WLS Dev edition'
+  outputs.dir wlsHome
+  doLast {
+    copy {
+      from zipTree(wlsInstallerDestPath)
+      into wlsHome
+    }
+  }
+}
+
+task setupWeblogic(type: Exec, dependsOn: extractWeblogic) {
+  description 'Runs Weblogic configure<sh|cmd> script'
+  workingDir wlsHome
+  environment 'MW_HOME', wlsHome
+  outputs.file "${wlsHome}/wlserver/.product.properties"
+  // Run the installation configuration script in the MW_HOME directory
+  if (osName.contains('windows')) {
+    commandLine 'cmd', '/c', 'configure.cmd'
+  } else {
+    commandLine './configure.sh'
+  }
+}
+
+def getCustomTemplateLocation(propertiesFile) {
+  String location = new File(propertiesFile).find { it =~ /domain.customTemplate=/ }.split('=')[1]
+  return new File(projectDir, location)
+}
+
+task createWeblogicTemplate(dependsOn: setupWeblogic) { 
+  description 'Generates a domain template'
+  outputs.file getCustomTemplateLocation(templateProperties)
+  doLast {
+    ant.taskdef(name: 'wlst',
+          classname: 'weblogic.ant.taskdefs.management.WLSTTask',
+          classpath: weblogicClasspath.asPath)
+    ant.wlst(fileName: "${projectDir}/buildSrc/main/resources/createTemplate.py",
+        debug: true,  
+        failOnError: true,
+        classpath: weblogicClasspath.asPath,
+        arguments: templateProperties)
+  }
+}
+
+task createWeblogicDomain(type: Exec, dependsOn: createWeblogicTemplate) {
+  description 'Unpacks domain template creating a domain'
+  outputs.dir new File(devDomain)
+  workingDir wlsHome
+  environment 'MW_HOME', wlsHome
+
+  if (osName.contains('windows')) {
+    commandLine = [
+      'cmd', '/c',
+      'wlserver\\server\\bin\\setWLSEnv.cmd',
+      '&&',
+      'cmd', '/c',
+      "wlserver\\common\\bin\\unpack.cmd -template=${getCustomTemplateLocation(templateProperties)} -domain=${devDomain}"
+    ]
+  } else {
+    // makes domain creation faster but less secure. Ok for DEV environments
+    environment 'CONFIG_JVM_ARGS', '-Djava.security.egd=file:/dev/./urandom'
+    commandLine = [
+      '/bin/sh', '-c',
+      "wlserver/server/bin/setWLSEnv.sh && ./wlserver/common/bin/unpack.sh -template=${getCustomTemplateLocation(templateProperties)} -domain=${devDomain}"
+    ]
+  }
+}
+
+task startWeblogic(type: SpawnProcess, dependsOn: createWeblogicDomain) {
+  description 'Starts Weblogic in background'
+  ready 'Server started in RUNNING mode'
+  environment = [ MW_HOME: wlsHome ]
+  workingDir devDomain
+  doFirst { println "--------------Start Weblogic------------------" }
+  doLast  { println '''-------- Weblogic server started ------------\n
+        On Windows, any CTRL-C in this session brings the server down\n
+        If not, use gradle\'s \'stopWeblogic\' task          ''' }
+
+  if (osName.contains('windows')) {
+    commandLine = [
+      'cmd', '/c',
+      '..\\..\\wls1036_dev\\wlserver\\server\\bin\\setWLSEnv.cmd',
+      '&&',
+      'cmd', '/c', 'startWebLogic.cmd'
+    ]
+  } else {
+    commandLine = [
+      '/bin/sh', '-c',
+      '../../wls1036_dev/wlserver/server/bin/setWLSEnv.sh && ./startWebLogic.sh'
+    ]
+  }
+}
+
+task stopWeblogic(type: Exec) {
+  description 'Stops Weblogic using scripts provided by it'
+  environment 'MW_HOME', wlsHome
+  workingDir devDomain
+  if (osName.contains('windows')) {
+    commandLine = [
+      'cmd', '/c', '..\\..\\wls1036_dev\\wlserver\\server\\bin\\setWLSEnv.cmd',
+      '&&',
+      'cmd', '/c', 'bin\\stopWebLogic.cmd'
+    ]
+  } else {
+    commandLine = [
+      '/bin/sh', '-c',
+      '../../wls1036_dev/wlserver/server/bin/setWLSEnv.sh && bin/stopWebLogic.sh'
+    ]
+  }
+}

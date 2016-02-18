@@ -1,0 +1,6 @@
+---
+- hosts: windows
+  tasks:
+
+  - name: install java 7
+    win_chocolatey: name=jdk7 state=present

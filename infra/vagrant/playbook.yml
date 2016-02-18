@@ -1,0 +1,24 @@
+---
+- hosts: linux
+  tasks:
+  - name: install groovy
+    yum: name=groovy state=present
+    become: yes
+
+  - name: install java 7
+    yum: name=java-1.7.0-openjdk state=present
+    become: yes
+
+  - name: sets JAVA_HOME
+    lineinfile:
+      dest={{ ansible_env["HOME"] }}/.bash_profile
+      regexp="^export JAVA_HOME="
+      line="export JAVA_HOME=/usr/lib/jvm/java"
+
+  - name: open firewall
+    iptables:
+      chain=IN_public_allow
+      protocol=tcp
+      destination_port=7001
+      jump=ACCEPT
+    become: yes

@@ -1,0 +1,64 @@
+apply plugin: "java"
+apply plugin: "war"
+sourceCompatibility = 1.6
+
+// start external PLUGIN CONFIG
+buildscript {
+  repositories {
+    maven { url "https://plugins.gradle.org/m2/" }
+    jcenter()
+  }
+  dependencies {
+    classpath "gradle.plugin.com.lv.plugins:gradle-weblogic-plugin:0.4"
+    classpath "de.undercouch:gradle-download-task:2.1.0"
+  }
+}
+
+apply plugin: "com.lv.weblogic"
+apply plugin: 'de.undercouch.download'
+// end external PLUGIN CONFIG
+
+configurations {
+  weblogic
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+  compile project(":common")
+  compile "javax.servlet:servlet-api:2.5"
+	weblogic files(downloadWlFullClient())
+}
+
+war {
+  baseName = 'metadata'
+}
+
+weblogic {
+  adminurl = 't3://localhost:7001'
+  // adminurl = 't3://other_server.my.corp.net:7001'
+  deploymentName = 'metadataApp'
+  source = "${buildDir}/libs/metadata.war"
+  targets = 'AdminServer'
+  user = 'weblogic'
+  password = 'weblogic1'
+  debug = false
+  verbose = false
+  upload = true
+  remote = false
+}
+
+wlDeploy.dependsOn "war"
+
+import de.undercouch.gradle.tasks.download.Download
+def downloadWlFullClient() {
+  File wlfullclientPath = new File("${projectDir}/.local/wlfullclient.jar")
+  download {
+    src 'https://s3-sa-east-1.amazonaws.com/weblogic-artifacts/wlfullclient.jar'
+    dest wlfullclientPath
+    overwrite false
+  }
+  return wlfullclientPath
+}
